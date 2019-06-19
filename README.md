@@ -1,5 +1,5 @@
 # Fast Efficient Hyperparameter Tuning for Policy Gradients (https://arxiv.org/abs/1902.06583)
-Implementation of HOOF for A2C and TNPG 
+Implementation of HOOF for A2C and TNPG.
 The code is based on OpenAI Baselines implementation: https://github.com/openai/baselines
 
 To run the code: 
