@@ -2,13 +2,11 @@ import numpy as np
 from baselines.a2c.utils import discount_with_dones
 from baselines.common.runners import AbstractEnvRunner
 
-class Hoof_Runner(AbstractEnvRunner):
+class HOOF_Runner(AbstractEnvRunner):
     """
     We use this class to generate batches of experiences
-    
     __init__:
     - Initialize the runner
-    
     run():
     - Make a mini batch of experiences
     """
@@ -22,6 +20,7 @@ class Hoof_Runner(AbstractEnvRunner):
         # We initialize the lists that will contain the mb of experiences
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones = [],[],[],[],[]
         mb_states = self.states
+        epinfos = []
         for n in range(self.nsteps):
             # Given observations, take action and value (V(s))
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
@@ -34,7 +33,10 @@ class Hoof_Runner(AbstractEnvRunner):
             mb_dones.append(self.dones)
 
             # Take actions in env and look the results
-            obs, rewards, dones, _ = self.env.step(actions)
+            obs, rewards, dones, infos = self.env.step(actions)
+            for info in infos:
+                maybeepinfo = info.get('episode')
+                if maybeepinfo: epinfos.append(maybeepinfo)
             self.states = states
             self.dones = dones
             for n, done in enumerate(dones):
@@ -43,7 +45,7 @@ class Hoof_Runner(AbstractEnvRunner):
             self.obs = obs
             mb_rewards.append(rewards)
         mb_dones.append(self.dones)
-        
+
         # Batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.ob_dtype).swapaxes(1, 0).reshape(self.batch_ob_shape)
         mb_rewards = np.asarray(mb_rewards, dtype=np.float32).swapaxes(1, 0)
@@ -53,8 +55,8 @@ class Hoof_Runner(AbstractEnvRunner):
         mb_masks = mb_dones[:, :-1]
         mb_dones = mb_dones[:, 1:]
 
-        mb_undisc_rwds = np.zeros(mb_rewards.shape)
-        
+        # added this
+        undisc_rwds = np.copy(mb_rewards)        
         if self.gamma > 0.0:
             # Discount/bootstrap off value fn
             last_values = self.model.value(self.obs, S=self.states, M=self.dones).tolist()
@@ -63,16 +65,17 @@ class Hoof_Runner(AbstractEnvRunner):
                 dones = dones.tolist()
                 if dones[-1] == 0:
                     rewards = discount_with_dones(rewards+[value], dones+[0], self.gamma)[:-1]
-                    undisc_rwds = discount_with_dones(rewards+[value], dones+[0], 1)[:-1]
                 else:
                     rewards = discount_with_dones(rewards, dones, self.gamma)
-                    undisc_rwds = discount_with_dones(rewards, dones, 1)
 
                 mb_rewards[n] = rewards
-                mb_undisc_rwds[n] = undisc_rwds
+
+        undisc_rwds[:,-1] += (1-mb_dones[:,-1])*np.array(last_values)
+        undisc_rwds = undisc_rwds.flatten()
+
         mb_actions = mb_actions.reshape(self.batch_action_shape)
 
         mb_rewards = mb_rewards.flatten()
         mb_values = mb_values.flatten()
         mb_masks = mb_masks.flatten()
-        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, mb_undisc_rwds[:,0]
+        return mb_obs, mb_states, mb_rewards, mb_masks, mb_actions, mb_values, undisc_rwds, epinfos

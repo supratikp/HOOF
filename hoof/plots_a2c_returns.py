@@ -8,13 +8,13 @@ Created on Tue Jan 15 22:51:36 2019
 import glob
 import os
 import numpy as np
-from baselines.common.plot_util import symmetric_ema
+from algos.plot_util import symmetric_ema
 import matplotlib.pyplot as plt
 import seaborn as sns
 sns.set_style("whitegrid")
-legendsize = 12
+legendsize = 14
 majorsize = 12
-fontsize = 12
+fontsize = 14
 
 def fix_point(x, y, interval):
     np.insert(x, 0, 0)
@@ -101,73 +101,35 @@ def plot_stuff(items, labels, stat='median', shade=True):
                 plt.fill_between(el['ts'], el['mean']-el['std'], el['mean']+el['std'], alpha=0.3)
             
 
-#---------------
-
-env = 'HalfCheetah-v2'
-kl = 0.03
-log = os.path.join('bl_results',env,'vanilla')
-ts, med, q1, q3, mean, std = load_returns_data(log, starts=10)
-vanilla = {'ts': ts, 'median':med, 'q1':q1, 'q3':q3, 'mean':mean, 'std':std}
-    
-
-# Plot 1: performance of Add vs LR vs Vanilla
-hoof_data = []
-types = ['hoof_additive', 'hoof_full']
-for ht in types:
-    log = os.path.join('bl_results', env, ht, 'max_kl_'+str(kl))
-    ts, med, q1, q3, mean, std = load_returns_data(log, starts=10, window=20)
-    hoof_dict = {'ts': ts, 'median':med, 'q1':q1, 'q3':q3, 'mean':mean, 'std':std}
-    hoof_data += [hoof_dict]
-hoof_data += [vanilla]
-
-plot_stuff(hoof_data, ['HOOF additive', 'HOOF LR', 'Baseline A2C'], stat='median')
-plt.tick_params(axis='both', which='major', labelsize=majorsize)
-plt.legend(prop={'size': legendsize})
-plt.xlabel("Timesteps", fontsize=fontsize)
-plt.ylabel("Returns", fontsize=fontsize)
-plt.show()
-
 #%%
 
-""" Uncomment if you have results for multiple KL
+# A2C results
 
-# Plot 2: Returns of HOOF additive for different KL
+envs = ['HalfCheetah-v2', 'Hopper-v2', 'Ant-v2', 'Walker2d-v2']
 
-hoof_data = []
-kl_vals = [0.01, 0.02, 0.03, 0.04, 0.05, 0.06]
-for kl in kl_vals:
-    log = os.path.join('bl_results',env,'hoof_full', 'max_kl_'+str(kl))
-    ts, med, q1, q3, mean, std = load_returns_data(log, starts=10, window=20)
-    hoof_dict = {'ts': ts, 'median':med, 'q1':q1, 'q3':q3, 'mean':mean, 'std':std}
-    hoof_data += [hoof_dict]
+for i,env in enumerate(envs):
+    log = os.path.join('results',env,'RMSProp_Baseline_A2C')
+    ts, med, q1, q3, mean, std = load_returns_data(log, starts=10)
+    baseline_RMSProp = {'ts': ts, 'median':med, 'q1':q1, 'q3':q3, 'mean':mean, 'std':std}
 
-kl_vals = [r'$\epsilon$ = ' + str(el) for el in kl_vals]
+    log = os.path.join('results',env,'A2C_RMSProp_HOOF_LR', 'max_kl_0.03')
+    ts, med, q1, q3, mean, std = load_returns_data(log, starts=10)
+    HOOF_LR_RMSProp = {'ts': ts, 'median':med, 'q1':q1, 'q3':q3, 'mean':mean, 'std':std}
 
-plot_stuff(hoof_data, kl_vals, stat='median')
-plt.tick_params(axis='both', which='major', labelsize=majorsize)
-plt.legend(prop={'size': legendsize})
-plt.xlabel("Timesteps", fontsize=fontsize)
-plt.ylabel("Returns", fontsize=fontsize)
-plt.show()
+    log = os.path.join('results',env,'SGD_Baseline_A2C')
+    ts, med, q1, q3, mean, std = load_returns_data(log, starts=10)
+    baseline_SGD = {'ts': ts, 'median':med, 'q1':q1, 'q3':q3, 'mean':mean, 'std':std}
 
+    log = os.path.join('results',env,'A2C_SGD_HOOF_LR', 'max_kl_0.03')
+    ts, med, q1, q3, mean, std = load_returns_data(log, starts=10)
+    HOOF_LR_SGD = {'ts': ts, 'median':med, 'q1':q1, 'q3':q3, 'mean':mean, 'std':std}
 
-
-#%%
-
-# Supplementary Plot: Performance without KL
-
-kl = 1000.0
-hoof_data = []
-log = os.path.join('bl_results', env, 'hoof_additive', 'max_kl_'+str(kl))
-ts, med, q1, q3, mean, std = load_returns_data(log, starts=10, window=20)
-hoof_dict = {'ts': ts, 'median':med, 'q1':q1, 'q3':q3, 'mean':mean, 'std':std}
-hoof_data = [vanilla, hoof_dict]
-
-plot_stuff(hoof_data, ['Baseline A2C', 'HOOF Additive w/o KL constraint'], stat='median')
-plt.tick_params(axis='both', which='major', labelsize=majorsize)
-plt.legend(prop={'size': legendsize})
-plt.xlabel("Timesteps", fontsize=fontsize)
-plt.ylabel("Returns", fontsize=fontsize)
-plt.show()
-
-"""
+    plot_stuff([HOOF_LR_RMSProp, baseline_RMSProp], ['HOOF A2C RMSProp', 'Baseline A2C RMSProp'], 'median', shade=True)
+    plot_stuff([HOOF_LR_SGD, baseline_SGD], ['HOOF A2C SGD', 'Baseline A2C SGD'], 'median', shade=True)
+    plt.tick_params(axis='both', which='major', labelsize=majorsize)
+    plt.legend(prop={'size': fontsize})
+    plt.ylabel("Returns", fontsize=fontsize)
+    plt.xlabel("Timesteps", fontsize=fontsize)
+    plt.xlim([0,5*10**6])
+    plt.title(env, fontsize=fontsize)
+    plt.show()
