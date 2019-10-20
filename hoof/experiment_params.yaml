@@ -1,0 +1,18 @@
+ant: Ant-v2
+cheetah: HalfCheetah-v2
+hopper: Hopper-v2
+walker: Walker2d-v2
+total_ts: 5000000
+# TNPG params
+batch_size: 10000
+discount_bound: [0.85, 1]
+lambda_bound: [0.85, 1]
+kl_bound: [0.001, 0.1]
+all_n_kl: 50
+all_n_gl: 50
+# A2C params
+n_envs: 40
+lr_ub: 0.01
+ent_ub: 0.2
+num_lr: 100
+num_ent_coeff: 50

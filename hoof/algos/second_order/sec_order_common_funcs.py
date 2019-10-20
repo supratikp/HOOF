@@ -1,9 +1,6 @@
 import numpy as np
 
-
 def traj_segment_generator_with_gl(pi, env, horizon, stochastic):
-    # same as Baselines function, except that we get rid of vpreds as that requires gamma/lam as inputs
-    
     # Initialize state variables
     t = 0
     ac = env.action_space.sample()
@@ -60,10 +57,10 @@ def traj_segment_generator_with_gl(pi, env, horizon, stochastic):
 def add_vtarg_and_adv_with_gl(pi, seg, gamma, lam):
     new = np.append(seg["new"], 0) # last element is only used for last vtarg, but we already zeroed it if last new = 1
     lg_shape = seg['ob'].shape[:-1] + (1,)
-    ob_gam_lam = np.concatenate((seg['ob'], 
+    ob_lam_gam = np.concatenate((seg['ob'], 
                                  gamma*np.ones(lg_shape), 
                                  lam*np.ones(lg_shape)), axis=2)
-    vpred = pi._evaluate([pi.vf], ob_gam_lam)[0]
+    vpred = pi._evaluate([pi.vf], ob_lam_gam)[0]
     nextvpred = vpred[-1]*(1-seg['new'][-1])
     vpred_next = np.append(vpred, nextvpred)
     T = len(seg["rew"])
@@ -75,7 +72,29 @@ def add_vtarg_and_adv_with_gl(pi, seg, gamma, lam):
         delta = rew[t] + gamma * vpred_next[t+1] * nonterminal - vpred_next[t]
         gaelam[t] = lastgaelam = delta + gamma * lam * nonterminal * lastgaelam
     tdlamret = adv + vpred
-    return ob_gam_lam, vpred, adv, tdlamret
+    return ob_lam_gam, vpred, adv, tdlamret
+
+
+def add_vtarg_and_adv_without_gl(pi, seg, gamma, lam):
+    new = np.append(seg["new"], 0) # last element is only used for last vtarg, but we already zeroed it if last new = 1
+    lg_shape = seg['ob'].shape[:-1] + (1,)
+    ob_lam_gam = np.concatenate((seg['ob'], 
+                                 np.ones(lg_shape), 
+                                 np.ones(lg_shape)), axis=2)
+    vpred = pi._evaluate([pi.vf], ob_lam_gam)[0]
+    nextvpred = vpred[-1]*(1-seg['new'][-1])
+    vpred_next = np.append(vpred, nextvpred)
+    T = len(seg["rew"])
+    adv = gaelam = np.empty(T, 'float32')
+    rew = seg["rew"]
+    lastgaelam = 0
+    for t in reversed(range(T)):
+        nonterminal = 1-new[t+1]
+        delta = rew[t] + gamma * vpred_next[t+1] * nonterminal - vpred_next[t]
+        gaelam[t] = lastgaelam = delta + gamma * lam * nonterminal * lastgaelam
+    tdlamret = adv + vpred
+    return ob_lam_gam, vpred, adv, tdlamret
+
 
 def wis_estimate(seg, lik_ratio):
     norm_val_rwd = np.copy(seg['rew'])

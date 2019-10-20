@@ -294,7 +294,7 @@ def run_pg(
                 meanlosses = surr, kl, *_ = allmean(np.array(compute_losses(*args)))
                 improve = surr - surrbefore
                 logger.log("Expected: %.3f Actual: %.3f"%(expectedimprove, improve))
-            elif algo=='TRPO':
+            else:
                 for _ in range(10):
                     thnew = thbefore + fullstep * stepsize
                     set_from_flat(thnew)
@@ -314,8 +314,6 @@ def run_pg(
                 else:
                     logger.log("couldn't compute a good step")
                     set_from_flat(thbefore)
-            else:
-                raise NotImplementedError
             # changes end
             if nworkers > 1 and iters_so_far % 20 == 0:
                 paramsums = MPI.COMM_WORLD.allgather((thnew.sum(), vfadam.getflat().sum())) # list of tuples

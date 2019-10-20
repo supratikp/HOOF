@@ -7,7 +7,7 @@ Created on Fri Mar 15 12:25:42 2019
 
 from baselines.trpo_mpi import defaults
 from baselines.trpo_mpi.trpo_mpi import flatten_lists, get_variables, get_trainable_variables, get_vf_trainable_variables, get_pi_trainable_variables
-from algos.second_order.sec_order_common_funcs import traj_segment_generator_with_gl, add_vtarg_and_adv_with_gl, wis_estimate
+from algos.second_order.sec_order_common_funcs import traj_segment_generator_with_gl, add_vtarg_and_adv_without_gl, wis_estimate
 from baselines.common import explained_variance, zipsame, dataset
 from baselines import logger
 import baselines.common.tf_util as U
@@ -22,7 +22,7 @@ from baselines.common.policies import build_policy
 from contextlib import contextmanager
 
 
-def learn_hoof_all(env, env_type, timesteps_per_batch, 
+def learn_hoof_no_lambgam(env, env_type, timesteps_per_batch, 
                    total_timesteps, kl_range, gamma_range, lam_range, 
                    num_kl=25, num_gamma_lam=20, **network_kwargs):
     params = defaults.mujoco()
@@ -32,7 +32,7 @@ def learn_hoof_all(env, env_type, timesteps_per_batch,
     if kl_range is 'fixed':
         num_kl = 1
 
-    run_hoof_all(network=params['network'],
+    run_hoof_no_lamgam(network=params['network'],
                 env=env,
                 total_timesteps=total_timesteps,
                 timesteps_per_batch=int(timesteps_per_batch/env.num_envs),
@@ -52,7 +52,7 @@ def learn_hoof_all(env, env_type, timesteps_per_batch,
 
 #-------------------------------------------------
 
-def run_hoof_all(
+def run_hoof_no_lamgam(
         network,
         env,
         total_timesteps,
@@ -262,7 +262,8 @@ def run_hoof_all(
         vpred = []
         
         for gl in range(num_gamma_lam):
-            oblg, vpredbefore, atarg, tdlr = add_vtarg_and_adv_with_gl(pi, seg, rand_gamma[gl], rand_lam[gl])
+            oblg, vpredbefore, atarg, tdlr = add_vtarg_and_adv_without_gl(pi, seg, rand_gamma[gl], rand_lam[gl])
+            
             ob_lam_gam  += [oblg]
             tdlamret += [tdlr]
             vpred += [vpredbefore]

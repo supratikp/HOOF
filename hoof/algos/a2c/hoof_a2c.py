@@ -1,3 +1,6 @@
+"""
+Updated version of Baselines A2C: LR + Ent coeff learnt using HOOF
+"""
 import time
 import functools
 import tensorflow as tf
@@ -8,20 +11,28 @@ import baselines.common.tf_util as U
 from baselines.common import set_global_seeds, explained_variance
 from baselines.common import tf_util
 from baselines.common.policies import build_policy
-from baselines.a2c.utils import find_trainable_variables
+from baselines.a2c.utils import Scheduler, find_trainable_variables
 
-from algos.first_order.hoof_runner import HOOF_Runner
-from algos.first_order.a2c_wis import wis_estimate
+from algos.a2c.hoof_runner import HOOF_Runner
 from tensorflow import losses
 
 from baselines.ppo2.ppo2 import safemean
 from collections import deque
 
+def wis_estimate(n_env, n_steps, undisc_rwds, lik_ratio):
+    lik_ratio = np.reshape(lik_ratio, (n_env, n_steps))
+    is_wts = np.product(lik_ratio, axis=1)
+    norm_val_rwd = (undisc_rwds- np.min(undisc_rwds))/(np.max(undisc_rwds) - np.min(undisc_rwds))
+    norm_val_rwd = np.reshape(norm_val_rwd, (n_env, n_steps))
+    norm_rets = np.sum(norm_val_rwd, axis=1)
+    est_val = np.dot(is_wts, norm_rets)/np.sum(is_wts)
+    return est_val
 
-class Ent_HOOF_Model(object):
-    def __init__(self, optimiser, policy, env, nsteps,
-            vf_coef=0.5, max_grad_norm=0.5, 
-            alpha=0.99, epsilon=1e-5, total_timesteps=int(80e6)):
+class HOOF_Model(object):
+    def __init__(self, policy, env, nsteps, optimiser,
+            ent_coef, vf_coef, max_grad_norm, total_timesteps,
+            alpha, epsilon # defaults for RMSProp
+            ):
 
         sess = tf_util.get_session()
         nenvs = env.num_envs
@@ -37,8 +48,7 @@ class Ent_HOOF_Model(object):
         A = tf.placeholder(train_model.action.dtype, train_model.action.shape)
         ADV = tf.placeholder(tf.float32, [nbatch])
         R = tf.placeholder(tf.float32, [nbatch])
-        LR = tf.placeholder(tf.float32, [])
-        Ent_Coeff = tf.placeholder(tf.float32, []) # for Entropy
+        Ent_Coeff = tf.placeholder(tf.float32, [])
 
         # Calculate the loss
         # Total loss = Policy gradient loss - entropy * entropy coefficient + Value coefficient * value loss
@@ -71,9 +81,9 @@ class Ent_HOOF_Model(object):
 
         # 3. Make op for one policy and value update step of A2C
         if optimiser=='RMSProp':
-            trainer = tf.train.RMSPropOptimizer(learning_rate=LR, decay=alpha, epsilon=epsilon)
+            trainer = tf.train.RMSPropOptimizer(learning_rate=1.0, decay=alpha, epsilon=epsilon)
         elif optimiser=='SGD':
-            trainer = tf.train.GradientDescentOptimizer(learning_rate=LR)
+            trainer = tf.train.GradientDescentOptimizer(learning_rate=1.0)
 
         _train = trainer.apply_gradients(grads)
 
@@ -94,7 +104,7 @@ class Ent_HOOF_Model(object):
             # rewards = R + yV(s')
             advs = rewards - values
 
-            td_map = {train_model.X:obs, A:actions, ADV:advs, R:rewards, Ent_Coeff:ent_coeff, LR:1.0}
+            td_map = {train_model.X:obs, A:actions, ADV:advs, R:rewards, Ent_Coeff:ent_coeff}
             if states is not None:
                 td_map[train_model.S] = states
                 td_map[train_model.M] = masks
@@ -104,7 +114,6 @@ class Ent_HOOF_Model(object):
             )
             return policy_loss, value_loss, policy_entropy
 
-        # Only this bit added
         def get_mean_std_neg_ll(obs, actions):
             td_map = {train_model.X:obs, A:actions}
             vals = sess.run([train_model.pd.mean, train_model.pd.std, neglogpac], td_map)
@@ -126,22 +135,28 @@ class Ent_HOOF_Model(object):
 #--------------------------------------------------------------------------
 
 
-def learn_ent_hoof_a2c(
+def learn_hoof_a2c(
     network,
     env,
-    optimiser,
     seed=None,
     nsteps=5,
-    total_timesteps=int(1e6),
+    total_timesteps=int(80e6),
+    vf_coef=0.5,
+    ent_coef=0.01,
+    max_grad_norm=0.5,
+    lr=7e-4,
+    lrschedule='linear',
+    epsilon=1e-5,
+    alpha=0.99,
+    gamma=0.99,
+    log_interval=100,
+    load_path=None, # Baselines default settings till here
+    optimiser='RMSProp', 
     lr_upper_bound=None,
     ent_upper_bound=None,
-    num_lr=None, 
+    num_lr=None,
     num_ent_coeff=None,
-    gamma=0.99,
-    max_kl=None,
-    max_grad_norm=0.5,
-    log_interval=100,
-    load_path=None,
+    max_kl=-1.0, # -1.0 is for no KL constraint
     **network_kwargs):
 
     '''
@@ -186,10 +201,27 @@ def learn_ent_hoof_a2c(
     nenvs = env.num_envs
     policy = build_policy(env, network, **network_kwargs)
 
+    # overwrite default params if using HOOF
+    if lr_upper_bound is not None:
+        lr = 1.0
+        lrschedule = 'constant'
+    else:
+        num_lr = 1
+        
+    if ent_upper_bound is None:
+        num_ent_coeff = 1 
+    
     # Instantiate the model object (that creates step_model and train_model)
-    model = Ent_HOOF_Model(optimiser=optimiser, policy=policy, env=env, nsteps=nsteps, total_timesteps=total_timesteps, max_grad_norm=max_grad_norm)
+    model = HOOF_Model(policy=policy, env=env, nsteps=nsteps, optimiser=optimiser,
+                        ent_coef=ent_coef, vf_coef=vf_coef, 
+                        max_grad_norm=max_grad_norm, total_timesteps=total_timesteps,
+                        alpha=alpha, epsilon=epsilon # defaults for RMSProp
+                        )
+
     runner = HOOF_Runner(env, model, nsteps=nsteps, gamma=gamma)
     epinfobuf = deque(maxlen=100)
+
+    lr = Scheduler(v=lr, nvalues=total_timesteps, schedule=lrschedule)
 
     # Calculate the batch_size
     nbatch = nenvs*nsteps
@@ -199,34 +231,37 @@ def learn_ent_hoof_a2c(
     get_flat = U.GetFlat(model_params)
     set_from_flat = U.SetFromFlat(model_params)
 
+    # for Gaussian policies
     def kl(new_mean, new_sd, old_mean, old_sd):
         approx_kl = np.log(new_sd/old_sd) + (old_sd**2 + (old_mean - new_mean)**2)/(2.0*new_sd**2 + 10**-8) - 0.5
         approx_kl = np.sum(approx_kl, axis=1)
         approx_kl = np.mean(approx_kl)
         return approx_kl
 
-    if max_kl is None: # set max kl to a high val in case there is no constraint
+    if max_kl==-1.0: # set max kl to a high val in case there is no constraint
         max_kl=10**8
         
     # Start total timer
     tstart = time.time()
 
     for update in range(1, int(total_timesteps//nbatch+1)):
-        opt_pol_val = -10**8
-        approx_kl = np.zeros((num_ent_coeff, num_lr))
-        epv = np.zeros((num_ent_coeff, num_lr))
-        rand_lr = lr_upper_bound*np.random.rand(num_lr)
-        rand_lr = np.sort(rand_lr)
-        rand_ent_coeff = ent_upper_bound*np.random.rand(num_ent_coeff)
-
-        old_params = get_flat()
-        rms_weights_before_upd = model.get_opt_state()
-        
         obs, states, rewards, masks, actions, values, undisc_rwds, epinfos = runner.run()
         epinfobuf.extend(epinfos)
         old_mean, old_sd, old_neg_ll = model.get_mean_std_neg_ll(obs, actions)
+        for step in range(len(obs)):
+            cur_lr = lr.value()
+
+        opt_pol_val = -10**8
+        old_params = get_flat()
+        rms_weights_before_upd = model.get_opt_state()
+        approx_kl = np.zeros((num_ent_coeff, num_lr))
+        epv = np.zeros((num_ent_coeff, num_lr))
+        rand_lr = lr_upper_bound*np.random.rand(num_lr) if lr_upper_bound is not None else [cur_lr]
+        rand_lr = np.sort(rand_lr)
+        rand_ent_coeff = ent_upper_bound*np.random.rand(num_ent_coeff) if ent_upper_bound is not None else [ent_coef]
+        
         for nec in range(num_ent_coeff):
-            # reset policy and rms prop optimiser
+            # reset policy and optimiser
             set_from_flat(old_params)
             model.set_opt_state(rms_weights_before_upd)
 
@@ -258,11 +293,12 @@ def learn_ent_hoof_a2c(
         model.set_opt_state(opt_rms_wts)
 
         # Shrink LR search space if too many get rejected
-        rejections = np.sum(approx_kl>max_kl)/num_lr
-        if rejections>0.8:
-            lr_upper_bound *= 0.8
-        if rejections==0:
-            lr_upper_bound *= 1.25
+        if lr_upper_bound is not None:
+            rejections = np.sum(approx_kl>max_kl)/num_lr
+            if rejections>0.8:
+                lr_upper_bound *= 0.8
+            if rejections==0:
+                lr_upper_bound *= 1.25
         
         nseconds = time.time()-tstart
 
@@ -279,11 +315,13 @@ def learn_ent_hoof_a2c(
             logger.record_tabular("value_loss", float(value_loss))
             logger.record_tabular("explained_variance", float(ev))
             logger.record_tabular("opt_lr", float(opt_lr))
-            logger.record_tabular("ent_coeff", float(opt_ent_coeff))
+            logger.record_tabular("opt_ent_coeff", float(opt_ent_coeff))
             logger.record_tabular("approx_kl", float(opt_kl))
-            logger.record_tabular("rejections", rejections)
-            logger.record_tabular("lr_ub", lr_upper_bound)
+            if lr_upper_bound is not None: 
+                logger.record_tabular("rejections", rejections)
+                logger.record_tabular("lr_ub", lr_upper_bound)
             logger.record_tabular("eprewmean", safemean([epinfo['r'] for epinfo in epinfobuf]))
             logger.record_tabular("eplenmean", safemean([epinfo['l'] for epinfo in epinfobuf]))
             logger.dump_tabular()
     return model
+
